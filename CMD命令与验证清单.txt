@@ -1,0 +1,24 @@
+========== Windows CMD 逐行命令（无 &&，可直接复制） ==========
+
+【一】初始化项目 + 安装依赖
+cd C:\Users\Lenovo-123\Desktop\FLUXFLOW
+npm install
+
+【二】启动开发服务器
+cd C:\Users\Lenovo-123\Desktop\FLUXFLOW
+npm run dev
+
+【三】构建生产版本（可选）
+cd C:\Users\Lenovo-123\Desktop\FLUXFLOW
+npm run build
+
+【四】预览生产构建（可选）
+cd C:\Users\Lenovo-123\Desktop\FLUXFLOW
+npm run preview
+
+========== 功能验证清单（5 项） ==========
+1. 番茄钟：开始/暂停/归零正常，useTimer 内 clearInterval 清理完整
+2. 面板拉伸：左 [180,400] 右 [300,600] 可拖拽，松开停止，useResize 中 mousemove/mouseup 已 removeEventListener 清理
+3. 任务增删改：Header 输入 Enter 新增，编辑/完成/删除与 localStorage 持久化一致
+4. 领域管理：领域定义面板可增删改领域、选图标与颜色，至少保留一个领域
+5. 沉浸模式：沉浸全屏倒计时与右侧时间一致，可暂停/继续/退出，状态同步

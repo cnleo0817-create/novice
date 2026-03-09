@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FluxFlow | 意图导向心智操作系统</title>
+    <!-- 依赖库 -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;900&display=swap');
+        
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #F1F5F9; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        
+        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+        .animate-in { animation: fade-in 0.3s ease-out forwards; }
+        
+        .matrix-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 1rem;
+            height: 100%;
+        }
+
+        /* 针对移动端或小屏幕的适配 */
+        @media (max-width: 768px) {
+            .matrix-grid {
+                grid-template-columns: 1fr;
+                grid-template-rows: repeat(4, auto);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useCallback, useRef } = React;
+        
+        // 动态图标组件库
+        const Icon = ({ name, size = 16, className = "", style = {} }) => {
+            const [ready, setReady] = useState(false);
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                    setReady(true);
+                }
+            }, [name]);
+
+            return <i data-lucide={name} className={className} style={{ width: size, height: size, ...style }}></i>;
+        };
+
+        const App = () => {
+            // --- [配置与预设数据] ---
+            const defaultDomains = [
+                { id: 'work', name: '职业', icon: 'briefcase', color: '#0F172A' },
+                { id: 'growth', name: '内在', icon: 'book-open', color: '#6366F1' },
+                { id: 'life', name: '留白', icon: 'coffee', color: '#10B981' }
+            ];
+
+            const iconOptions = ['briefcase', 'book-open', 'coffee', 'tag', 'target', 'zap', 'anchor', 'wind'];
+            const colorOptions = ['#0F172A', '#6366F1', '#10B981', '#F59E0B', '#EF4444', '#EC4899', '#8B5CF6', '#64748B'];
+
+            // --- [状态管理] ---
+            const [domains, setDomains] = useState(() => {
+                const saved = localStorage.getItem('fluxflow_v6_domains');
+                return saved ? JSON.parse(saved) : defaultDomains;
+            });
+
+            const [tasks, setTasks] = useState(() => {
+                const saved = localStorage.getItem('fluxflow_v6_tasks');
+                return saved ? JSON.parse(saved) : [];
+            });
+
+            const [activeTab, setActiveTab] = useState('flow'); 
+            const [activeDomain, setActiveDomain] = useState('all');
+            const [editingTask, setEditingTask] = useState(null);
+            const [isManagingDomains, setIsManagingDomains] = useState(false);
+            const [inputValue, setInputValue] = useState("");
+            
+            const [leftWidth, setLeftWidth] = useState(260); 
+            const [rightWidth, setRightWidth] = useState(380); 
+            const [isResizingLeft, setIsResizingLeft] = useState(false);
+            const [isResizingRight, setIsResizingRight] = useState(false);
+
+            const [timeLeft, setTimeLeft] = useState(25 * 60);
+            const [isActive, setIsActive] = useState(false);
+            const [isImmersive, setIsImmersive] = useState(false);
+
+            // --- [副作用] ---
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            });
+
+            useEffect(() => {
+                let interval = null;
+                if (isActive && timeLeft > 0) {
+                    interval = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
+                } else if (timeLeft === 0) {
+                    setIsActive(false);
+                    clearInterval(interval);
+                }
+                return () => clearInterval(interval);
+            }, [isActive, timeLeft]);
+
+            useEffect(() => {
+                localStorage.setItem('fluxflow_v6_domains', JSON.stringify(domains));
+                localStorage.setItem('fluxflow_v6_tasks', JSON.stringify(tasks));
+            }, [domains, tasks]);
+
+            // --- [拉伸逻辑] ---
+            const resize = useCallback((e) => {
+                if (isResizingLeft) {
+                    const newWidth = e.clientX;
+                    if (newWidth > 180 && newWidth < 400) setLeftWidth(newWidth);
+                }
+                if (isResizingRight) {
+                    const newWidth = window.innerWidth - e.clientX;
+                    if (newWidth > 300 && newWidth < 600) setRightWidth(newWidth);
+                }
+            }, [isResizingLeft, isResizingRight]);
+
+            useEffect(() => {
+                const stop = () => { setIsResizingLeft(false); setIsResizingRight(false); };
+                window.addEventListener('mousemove', resize);
+                window.addEventListener('mouseup', stop);
+                return () => { window.removeEventListener('mousemove', resize); window.removeEventListener('mouseup', stop); };
+            }, [resize]);
+
+            // --- [任务逻辑] ---
+            const addTask = (e) => {
+                if (e.key === 'Enter' && inputValue.trim()) {
+                    const now = new Date();
+                    const isFocusMode = activeTab === 'focus';
+                    
+                    const newTask = {
+                        id: Date.now(),
+                        title: inputValue.trim(),
+                        completed: false,
+                        domain: activeDomain === 'all' ? domains[0].id : activeDomain,
+                        isImportant: isFocusMode ? true : false, 
+                        isUrgent: isFocusMode ? true : false, 
+                        isCore: false,
+                        date: now.toISOString().split('T')[0],
+                        time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }),
+                        note: ""
+                    };
+                    
+                    setTasks(prev => [newTask, ...prev]);
+                    setInputValue("");
+                    setEditingTask(newTask);
+                }
+            };
+
+            const updateTask = (id, updates) => {
+                setTasks(prev => {
+                    let newTasks = prev;
+                    if (updates.isCore === true) newTasks = prev.map(t => ({ ...t, isCore: false }));
+                    return newTasks.map(t => t.id === id ? { ...t, ...updates } : t);
+                });
+                if (editingTask?.id === id) setEditingTask(prev => ({ ...prev, ...updates }));
+            };
+
+            const toggleTask = (id, e) => {
+                e?.stopPropagation();
+                setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t));
+            };
+
+            // --- [过滤逻辑] ---
+            const coreTask = useMemo(() => tasks.find(t => t.isCore && !t.completed), [tasks]);
+
+            const displayTasks = useMemo(() => {
+                let filtered = tasks.filter(t => activeDomain === 'all' || t.domain === activeDomain);
+                
+                if (activeTab === 'focus') {
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    return filtered.filter(t => !t.completed && t.date === todayStr && (t.isImportant || t.isCore));
+                }
+
+                if (activeTab === 'matrix') {
+                    return filtered.filter(t => !t.completed).sort((a, b) => `${a.date} ${a.time}` > `${b.date} ${b.time}` ? 1 : -1);
+                }
+                
+                return [...filtered].sort((a, b) => `${a.date} ${a.time}` > `${b.date} ${b.time}` ? 1 : -1);
+            }, [tasks, activeTab, activeDomain]);
+
+            const flowGroups = useMemo(() => {
+                if (activeTab !== 'flow') return [];
+                const groups = {};
+                displayTasks.forEach(task => {
+                    if (!groups[task.date]) groups[task.date] = [];
+                    groups[task.date].push(task);
+                });
+                return Object.entries(groups).sort((a, b) => a[0] > b[0] ? 1 : -1);
+            }, [displayTasks, activeTab]);
+
+            const formatTime = (seconds) => {
+                const mins = Math.floor(seconds / 60);
+                const secs = seconds % 60;
+                return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+            };
+
+            const updateDomain = (id, updates) => setDomains(prev => prev.map(d => d.id === id ? { ...d, ...updates } : d));
+            const addDomain = () => setDomains([...domains, { id: Date.now().toString(), name: '新领域', icon: 'tag', color: '#64748B' }]);
+            const deleteDomain = (id) => {
+                if (domains.length <= 1) return;
+                setDomains(prev => prev.filter(d => d.id !== id));
+            };
+
+            return (
+                <div className="flex h-screen bg-white text-slate-800 select-none overflow-hidden w-full" onClick={() => setEditingTask(null)}>
+                    
+                    {/* 沉浸模式 */}
+                    {isImmersive && (
+                        <div className="fixed inset-0 z-[200] bg-slate-950 flex flex-col items-center justify-center animate-in" onClick={e => e.stopPropagation()}>
+                            <div className="text-[12rem] font-black text-white mb-12 tabular-nums">{formatTime(timeLeft)}</div>
+                            <div className="flex gap-4">
+                                <button onClick={() => setIsActive(!isActive)} className="px-10 py-4 rounded-full bg-white text-slate-900 font-black uppercase tracking-widest text-xs hover:scale-105 transition-all">
+                                    {isActive ? '暂停' : '继续'}
+                                </button>
+                                <button onClick={() => setIsImmersive(false)} className="px-10 py-4 rounded-full border border-white/20 text-white hover:bg-white/10 transition-all uppercase tracking-widest text-xs">
+                                    退出沉浸
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 领域管理 */}
+                    {isManagingDomains && (
+                        <div className="fixed inset-0 z-[110] bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-6" onClick={() => setIsManagingDomains(false)}>
+                            <div className="bg-white w-full max-w-lg rounded-[32px] shadow-2xl overflow-hidden animate-in" onClick={e => e.stopPropagation()}>
+                                <div className="p-8 border-b border-slate-50 flex items-center justify-between">
+                                    <h2 className="text-sm font-black uppercase tracking-widest text-slate-900">领域定义面板</h2>
+                                    <button onClick={() => setIsManagingDomains(false)} className="p-2 hover:bg-slate-50 rounded-full transition-colors"><Icon name="x" size={20}/></button>
+                                </div>
+                                <div className="p-8 max-h-[60vh] overflow-y-auto custom-scrollbar space-y-6">
+                                    {domains.map(domain => (
+                                        <div key={domain.id} className="p-5 rounded-2xl border border-slate-100 space-y-4">
+                                            <div className="flex items-center gap-4">
+                                                <div className="p-3 rounded-xl" style={{ backgroundColor: domain.color + '10', color: domain.color }}>
+                                                    <Icon name={domain.icon} size={20} />
+                                                </div>
+                                                <input className="flex-1 text-sm font-bold bg-transparent border-none outline-none focus:ring-0 p-0 text-slate-900" value={domain.name} onChange={(e) => updateDomain(domain.id, { name: e.target.value })} />
+                                                <button onClick={() => deleteDomain(domain.id)} className="text-slate-300 hover:text-rose-500 transition-colors"><Icon name="trash-2" size={16}/></button>
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {iconOptions.map(iconName => (
+                                                    <button key={iconName} onClick={() => updateDomain(domain.id, { icon: iconName })} className={`p-2 rounded-lg transition-all ${domain.icon === iconName ? 'bg-slate-900 text-white' : 'hover:bg-slate-50 text-slate-400'}`}>
+                                                        <Icon name={iconName} size={14} />
+                                                    </button>
+                                                ))}
+                                            </div>
+                                            <div className="flex flex-wrap gap-2">
+                                                {colorOptions.map(color => (
+                                                    <button key={color} onClick={() => updateDomain(domain.id, { color: color })} className={`w-6 h-6 rounded-full transition-transform hover:scale-125 ${domain.color === color ? 'ring-2 ring-slate-900 ring-offset-2' : ''}`} style={{ backgroundColor: color }} />
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                                <div className="p-8 bg-slate-50">
+                                    <button onClick={addDomain} className="w-full py-4 bg-white border border-slate-200 rounded-2xl text-xs font-black uppercase tracking-widest hover:border-slate-900 transition-all flex items-center justify-center gap-2">
+                                        <Icon name="plus" size={16}/> 新增领域
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 左导航 */}
+                    <aside style={{ width: `${leftWidth}px` }} className="border-r border-slate-100 flex flex-col bg-slate-50/30 relative shrink-0">
+                        <div className="p-8 flex flex-col h-full">
+                            <div className="flex items-center gap-3 mb-12">
+                                <div className="w-8 h-8 bg-slate-900 rounded-lg flex items-center justify-center"><Icon name="sparkles" size={16} className="text-white fill-current" /></div>
+                                <span className="text-sm font-black tracking-widest uppercase italic">FluxFlow</span>
+                            </div>
+                            <nav className="flex-1 space-y-10 overflow-y-auto custom-scrollbar">
+                                <div>
+                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 px-2">模式</p>
+                                    <div className="space-y-1">
+                                        {[{ id: 'focus', icon: 'target', label: '今日焦点' }, { id: 'matrix', icon: 'layout-grid', label: '秩序象限' }, { id: 'flow', icon: 'clock', label: '时间之流' }].map(item => (
+                                            <button key={item.id} onClick={() => setActiveTab(item.id)} className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${activeTab === item.id ? 'bg-white shadow-sm border border-slate-100 text-slate-900 font-bold' : 'text-slate-500 hover:text-slate-800'}`}>
+                                                <Icon name={item.icon} size={16} /> <span className="text-sm">{item.label}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="flex items-center justify-between mb-4 px-2">
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">领域</p>
+                                        <button onClick={(e) => { e.stopPropagation(); setIsManagingDomains(true); }} className="text-slate-300 hover:text-slate-900 transition-colors"><Icon name="settings-2" size={12} /></button>
+                                    </div>
+                                    <div className="space-y-1">
+                                        <button onClick={() => setActiveDomain('all')} className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all ${activeDomain === 'all' ? 'text-slate-900 font-bold' : 'text-slate-400 hover:text-slate-600'}`}>
+                                            <Icon name="circle" size={14} /> <span>全域</span>
+                                        </button>
+                                        {domains.map(d => (
+                                            <button key={d.id} onClick={() => setActiveDomain(d.id)} className={`w-full flex items-center gap-3 px-3 py-2 rounded-xl text-sm transition-all ${activeDomain === d.id ? 'text-slate-900 font-bold' : 'text-slate-400 hover:text-slate-600'}`}>
+                                                <Icon name={d.icon} size={14} style={{ color: d.color }} />
+                                                <span className="truncate">{d.name}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            </nav>
+                        </div>
+                        <div onMouseDown={() => setIsResizingLeft(true)} className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-slate-200 transition-colors z-50" />
+                    </aside>
+
+                    {/* 主工作区 */}
+                    <section className="flex-1 flex flex-col min-w-0 bg-white relative">
+                        <header className="px-12 pt-12 pb-6">
+                            <div className="max-w-4xl mx-auto w-full">
+                                <div className="mb-10 flex items-center justify-between">
+                                    <div>
+                                        <h1 className="text-3xl font-black tracking-tight text-slate-900 capitalize mb-1">
+                                            {activeTab === 'focus' ? '今日焦点' : activeTab === 'matrix' ? '秩序象限' : '时间之流'}
+                                        </h1>
+                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">
+                                            {new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })}
+                                        </p>
+                                    </div>
+                                    {coreTask && (
+                                        <div className="flex items-center gap-4 bg-slate-900 text-white px-6 py-3 rounded-2xl shadow-xl shadow-slate-200 animate-in">
+                                            <Icon name="zap" size={14} className="text-amber-400 fill-current" />
+                                            <div className="flex flex-col">
+                                                <span className="text-[9px] font-black uppercase tracking-widest opacity-50">当前核心意图</span>
+                                                <span className="text-xs font-bold truncate max-w-[200px]">{coreTask.title}</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="relative group" onClick={e => e.stopPropagation()}>
+                                    <Icon name="plus" className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-300" size={20} />
+                                    <input 
+                                        type="text" placeholder="输入并捕捉意图..." 
+                                        className="w-full h-14 pl-12 pr-6 bg-slate-50 border-transparent focus:bg-white border focus:border-slate-200 rounded-2xl text-sm font-medium outline-none transition-all" 
+                                        value={inputValue} onChange={(e) => setInputValue(e.target.value)} onKeyDown={addTask} 
+                                    />
+                                </div>
+                            </div>
+                        </header>
+
+                        <main className="flex-1 overflow-y-auto custom-scrollbar px-12 py-6">
+                            {activeTab === 'matrix' ? (
+                                <div className="matrix-grid max-w-5xl mx-auto">
+                                    {[
+                                        { label: '重要且紧急', important: true, urgent: true, color: 'rose' },
+                                        { label: '重要不紧急', important: true, urgent: false, color: 'amber' },
+                                        { label: '紧急不重要', important: false, urgent: true, color: 'blue' },
+                                        { label: '不重要不紧急', important: false, urgent: false, color: 'slate' }
+                                    ].map(quadrant => (
+                                        <div key={quadrant.label} className="bg-slate-50/50 border border-slate-100 rounded-[32px] p-6 flex flex-col min-h-[300px]">
+                                            <div className="flex items-center justify-between mb-4">
+                                                <span className={`text-[10px] font-black uppercase tracking-widest text-${quadrant.color}-500`}>{quadrant.label}</span>
+                                                <div className={`w-1.5 h-1.5 rounded-full bg-${quadrant.color}-500`}></div>
+                                            </div>
+                                            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
+                                                {displayTasks.filter(t => t.isImportant === quadrant.important && t.isUrgent === quadrant.urgent && !t.completed).map(task => (
+                                                    <div key={task.id} onClick={(e) => { e.stopPropagation(); setEditingTask(task); }} className={`p-4 bg-white border border-slate-50 rounded-2xl shadow-sm hover:border-slate-900 transition-all cursor-pointer flex items-center gap-3`}>
+                                                        <button onClick={(e) => toggleTask(task.id, e)} className="shrink-0"><Icon name="circle" className="text-slate-200 hover:text-slate-400" size={16}/></button>
+                                                        <div className="text-xs font-bold text-slate-700 truncate flex-1">{task.title}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="max-w-4xl mx-auto space-y-4">
+                                    {activeTab === 'flow' ? flowGroups.map(([date, groupTasks]) => (
+                                        <div key={date} className="space-y-4 mb-8">
+                                            <div className="flex items-center gap-3">
+                                                <div className="text-[10px] font-black text-slate-300 uppercase tracking-widest">{date}</div>
+                                                <div className="h-[1px] flex-1 bg-slate-50"></div>
+                                            </div>
+                                            {groupTasks.map(task => (
+                                                <div key={task.id} onClick={(e) => { e.stopPropagation(); setEditingTask(task); }} className={`flex items-center gap-4 p-5 rounded-3xl border transition-all cursor-pointer ${editingTask?.id === task.id ? 'border-slate-900 bg-slate-50' : 'border-slate-50 hover:bg-slate-50'}`}>
+                                                    <div className="text-[10px] font-black text-slate-200 w-10">{task.time}</div>
+                                                    <button onClick={(e) => toggleTask(task.id, e)} className="shrink-0">
+                                                        {task.completed ? <Icon name="check-circle-2" className="text-slate-900" size={20}/> : <Icon name="circle" className="text-slate-200" size={20}/>}
+                                                    </button>
+                                                    <div className="flex-1 flex flex-col gap-1">
+                                                        <span className={`text-sm font-bold ${task.completed ? 'text-slate-300 line-through font-normal' : 'text-slate-800'}`}>{task.title}</span>
+                                                        {task.isCore && <span className="text-[9px] font-black text-amber-500 uppercase flex items-center gap-1"><Icon name="zap" size={8} className="fill-current"/> CORE INTENT</span>}
+                                                    </div>
+                                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: domains.find(d => d.id === task.domain)?.color }}></div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )) : displayTasks.map(task => (
+                                        <div key={task.id} onClick={(e) => { e.stopPropagation(); setEditingTask(task); }} className={`flex items-center gap-4 p-5 rounded-3xl border transition-all cursor-pointer ${editingTask?.id === task.id ? 'border-slate-900 bg-slate-50' : 'border-slate-50 hover:bg-slate-50'}`}>
+                                            <button onClick={(e) => toggleTask(task.id, e)} className="shrink-0">
+                                                {task.completed ? <Icon name="check-circle-2" className="text-slate-900" size={20}/> : <Icon name="circle" className="text-slate-200" size={20}/>}
+                                            </button>
+                                            <div className="flex-1 flex flex-col gap-1">
+                                                <span className={`text-sm font-bold ${task.completed ? 'text-slate-300 line-through font-normal' : 'text-slate-800'}`}>{task.title}</span>
+                                                {task.isCore && <span className="text-[9px] font-black text-amber-500 uppercase flex items-center gap-1"><Icon name="zap" size={8} className="fill-current"/> CORE INTENT</span>}
+                                            </div>
+                                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: domains.find(d => d.id === task.domain)?.color }}></div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </main>
+                    </section>
+
+                    {/* 右面板 */}
+                    <aside style={{ width: `${rightWidth}px` }} className="border-l border-slate-100 flex flex-col bg-slate-50/30 relative shrink-0" onClick={e => e.stopPropagation()}>
+                        <div onMouseDown={() => setIsResizingRight(true)} className="absolute top-0 left-0 w-1 h-full cursor-col-resize hover:bg-slate-200 transition-colors z-50" />
+                        <div className="p-8 border-b border-slate-100 bg-white shrink-0 text-center">
+                            <div className="text-4xl font-black mb-6 tabular-nums tracking-tighter text-slate-900">{formatTime(timeLeft)}</div>
+                            <div className="flex gap-2">
+                                <button onClick={() => setIsImmersive(true)} className="flex-1 h-12 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-800 transition-all"><Icon name="maximize-2" size={14}/> 沉浸</button>
+                                <button onClick={() => setIsActive(!isActive)} className={`w-12 h-12 rounded-xl flex items-center justify-center transition-all ${isActive ? 'bg-rose-50 text-rose-500' : 'bg-slate-100 text-slate-400'}`}>{isActive ? <Icon name="pause" size={16}/> : <Icon name="play" size={16}/>}</button>
+                                <button onClick={() => { setIsActive(false); setTimeLeft(25 * 60); }} className="w-12 h-12 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center hover:text-slate-900 transition-all"><Icon name="rotate-ccw" size={16}/></button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                            {editingTask ? (
+                                <div className="space-y-8 animate-in">
+                                    <textarea className="w-full text-xl font-black text-slate-900 bg-transparent border-none outline-none resize-none p-0 focus:ring-0" value={editingTask.title} onChange={(e) => updateTask(editingTask.id, { title: e.target.value })} rows={2} />
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5"><Icon name="calendar-days" size={10}/> 计划日期</label>
+                                            <input type="date" className="w-full p-3 bg-white border border-slate-100 rounded-xl text-[11px] font-bold outline-none shadow-sm" value={editingTask.date} onChange={(e) => updateTask(editingTask.id, { date: e.target.value })} />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5"><Icon name="watch" size={10}/> 计划时间</label>
+                                            <input type="time" className="w-full p-3 bg-white border border-slate-100 rounded-xl text-[11px] font-bold outline-none shadow-sm" value={editingTask.time} onChange={(e) => updateTask(editingTask.id, { time: e.target.value })} />
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col gap-4">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">维度标记</label>
+                                        <div className="flex gap-2">
+                                            <button onClick={() => updateTask(editingTask.id, { isImportant: !editingTask.isImportant })} className={`flex-1 py-3 rounded-xl text-[11px] font-bold border transition-all ${editingTask.isImportant ? 'bg-amber-50 border-amber-500 text-amber-600' : 'bg-white border-slate-100 text-slate-400'}`}>重要</button>
+                                            <button onClick={() => updateTask(editingTask.id, { isUrgent: !editingTask.isUrgent })} className={`flex-1 py-3 rounded-xl text-[11px] font-bold border transition-all ${editingTask.isUrgent ? 'bg-rose-50 border-rose-500 text-rose-600' : 'bg-white border-slate-100 text-slate-400'}`}>紧急</button>
+                                        </div>
+                                        <button onClick={() => updateTask(editingTask.id, { isCore: !editingTask.isCore })} className={`w-full py-4 rounded-xl text-[11px] font-black uppercase tracking-widest border transition-all flex items-center justify-center gap-2 ${editingTask.isCore ? 'bg-slate-900 border-slate-900 text-amber-400' : 'bg-white border-slate-100 text-slate-400'}`}>
+                                            <Icon name="zap" size={14} className={editingTask.isCore ? 'fill-current' : ''}/> 设为核心意图
+                                        </button>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">领域分配</label>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {domains.map(d => (
+                                                <button key={d.id} onClick={() => updateTask(editingTask.id, { domain: d.id })} className={`px-4 py-3 rounded-xl text-[11px] font-bold border transition-all ${editingTask.domain === d.id ? 'bg-white border-slate-900 text-slate-900 ring-1 ring-slate-900' : 'bg-white border-slate-100 text-slate-400'}`}>
+                                                    {d.name}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div className="space-y-4">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">详情备注</label>
+                                        <textarea className="w-full h-32 p-4 bg-white border border-slate-100 rounded-2xl text-xs text-slate-600 outline-none resize-none shadow-sm" value={editingTask.note} onChange={(e) => updateTask(editingTask.id, { note: e.target.value })} placeholder="记录心流瞬间..." />
+                                    </div>
+                                    <button onClick={() => { setTasks(prev => prev.filter(t => t.id !== editingTask.id)); setEditingTask(null); }} className="w-full h-12 bg-rose-50 text-rose-500 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-rose-500 hover:text-white transition-all flex items-center justify-center gap-2"><Icon name="trash-2" size={14}/> 彻底删除</button>
+                                </div>
+                            ) : (
+                                <div className="h-full flex flex-col items-center justify-center text-slate-300 opacity-40">
+                                    <div className="w-16 h-16 bg-slate-100 rounded-3xl flex items-center justify-center mb-6"><Icon name="edit-3" size={24} /></div>
+                                    <p className="text-[10px] font-black uppercase tracking-widest">选择任务以编辑详情</p>
+                                </div>
+                            )}
+                        </div>
+                    </aside>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
