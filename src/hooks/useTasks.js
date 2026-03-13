@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { seedTasks } from '../data/seedData.js';
+import { db, ensureLogin } from '../cloudbase.js';
 
 export const defaultDomains = [
   { id: 'work', name: '职业', icon: 'briefcase', color: '#0F172A' },
@@ -34,11 +35,89 @@ export const useTasks = () => {
   const [completedCoreTaskId, setCompletedCoreTaskId] = useState(null);
   const [showSetCoreIntentHint, setShowSetCoreIntentHint] = useState(false);
   const [showReportModal, setShowReportModal] = useState(false);
+  // 云端匿名用户 ID（CloudBase 提供）
+  const [cloudUid, setCloudUid] = useState(null);
+  // 应用内“账号”：A / B，用于区分你和你老婆
+  const [appUser, setAppUser] = useState(() => {
+    const saved = localStorage.getItem('fluxflow_app_user');
+    return saved === 'A' || saved === 'B' ? saved : '';
+  });
+  const [loading, setLoading] = useState(true);
+  const [authError, setAuthError] = useState('');
+  const [backendToken, setBackendToken] = useState(
+    () => localStorage.getItem('fluxflow_backend_token') || ''
+  );
+
+  // 组合出真正用于区分数据的 userId（云端 uid + 应用内账号）
+  const userId = cloudUid && appUser ? `${cloudUid}-${appUser}` : null;
 
   useEffect(() => {
     localStorage.setItem('fluxflow_v6_domains', JSON.stringify(domains));
     localStorage.setItem('fluxflow_v6_tasks', JSON.stringify(tasks));
   }, [domains, tasks]);
+
+  // 1）确保 CloudBase 匿名登录，拿到 cloudUid
+  useEffect(() => {
+    let cancelled = false;
+
+    const doLogin = async () => {
+      try {
+        setLoading(true);
+        const loginState = await ensureLogin();
+        if (cancelled) return;
+        const uid = loginState?.user?.uid || loginState?.user?.openid || null;
+        setCloudUid(uid);
+      } catch (err) {
+        console.error('CloudBase 登录失败', err);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    doLogin();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // 2）当 userId（云 uid + 应用账号）确定后，从 CloudBase 加载对应用户的数据
+  useEffect(() => {
+    if (!userId) return;
+
+    let cancelled = false;
+
+    const loadFromCloud = async () => {
+      try {
+        setLoading(true);
+        const taskRes = await db.collection('tasks').where({ userId }).get();
+        const domainRes = await db.collection('domains').where({ userId }).get();
+
+        if (cancelled) return;
+
+        if (taskRes?.data?.length) {
+          setTasks(taskRes.data);
+        }
+        if (domainRes?.data?.length) {
+          setDomains(domainRes.data);
+        }
+      } catch (err) {
+        console.error('加载 CloudBase 数据失败', err);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadFromCloud();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
 
   useEffect(() => {
     if (activeTab !== 'flow') setFlowViewMode('flow');
@@ -125,6 +204,14 @@ export const useTasks = () => {
       };
 
       setTasks((prev) => [newTask, ...prev]);
+
+      if (userId) {
+        db.collection('tasks')
+          .add({ ...newTask, userId })
+          .catch((err) => {
+            console.error('保存任务到 CloudBase 失败', err);
+          });
+      }
       setInputValue('');
       setEditingTask(newTask);
     }
@@ -146,6 +233,16 @@ export const useTasks = () => {
         t.id === id ? { ...t, ...updates } : t
       );
     });
+
+    if (userId) {
+      const payload = { ...updates };
+      db.collection('tasks')
+        .where({ userId, id })
+        .update(payload)
+        .catch((err) => {
+          console.error('更新 CloudBase 任务失败', err);
+        });
+    }
     if (editingTask?.id === id) {
       setEditingTask((prev) => (prev ? { ...prev, ...updates } : prev));
     }
@@ -164,6 +261,16 @@ export const useTasks = () => {
           setCompletedCoreTaskId(id);
         }, 0);
       }
+
+      if (userId && toggled) {
+        db.collection('tasks')
+          .where({ userId, id })
+          .update({ completed: toggled.completed })
+          .catch((err) => {
+            console.error('切换 CloudBase 任务完成状态失败', err);
+          });
+      }
+
       return next;
     });
   };
@@ -174,6 +281,15 @@ export const useTasks = () => {
         .filter((t) => t.id !== id)
         .map((t) => (t.chainNextId === id ? { ...t, chainNextId: null } : t))
     );
+
+    if (userId) {
+      db.collection('tasks')
+        .where({ userId, id })
+        .remove()
+        .catch((err) => {
+          console.error('删除 CloudBase 任务失败', err);
+        });
+    }
     if (editingTask?.id === id) {
       setEditingTask(null);
     }
@@ -232,17 +348,43 @@ export const useTasks = () => {
     setTasks((prevTasks) => [newTask, ...prevTasks]);
     setChainNext(prevTaskId, newTask.id);
     setEditingTask(newTask);
+
+    if (userId) {
+      db.collection('tasks')
+        .add({ ...newTask, userId })
+        .catch((err) => {
+          console.error('保存下一环任务到 CloudBase 失败', err);
+        });
+    }
   };
 
   const updateDomain = (id, updates) => {
     setDomains((prev) => prev.map((d) => (d.id === id ? { ...d, ...updates } : d)));
+
+    if (userId) {
+      db.collection('domains')
+        .where({ userId, id })
+        .update({ ...updates })
+        .catch((err) => {
+          console.error('更新 CloudBase 领域失败', err);
+        });
+    }
   };
 
   const addDomain = () => {
+    const newDomain = { id: Date.now().toString(), name: '新领域', icon: 'tag', color: '#64748B' };
     setDomains((prev) => [
       ...prev,
-      { id: Date.now().toString(), name: '新领域', icon: 'tag', color: '#64748B' },
+      newDomain,
     ]);
+
+    if (userId) {
+      db.collection('domains')
+        .add({ ...newDomain, userId })
+        .catch((err) => {
+          console.error('新增 CloudBase 领域失败', err);
+        });
+    }
   };
 
   const deleteDomain = (id) => {
@@ -250,6 +392,15 @@ export const useTasks = () => {
       if (prev.length <= 1) return prev;
       return prev.filter((d) => d.id !== id);
     });
+
+    if (userId) {
+      db.collection('domains')
+        .where({ userId, id })
+        .remove()
+        .catch((err) => {
+          console.error('删除 CloudBase 领域失败', err);
+        });
+    }
   };
 
   const clearEditingTask = () => {
@@ -271,6 +422,53 @@ export const useTasks = () => {
     }
     setShowCoreCompleteModal(false);
     setCompletedCoreTaskId(null);
+  };
+
+  // 应用内登录：只允许 A / B，密码固定 123
+  const loginAppUser = async (name, password) => {
+    const trimmed = (name || '').trim().toUpperCase();
+    try {
+      setAuthError('');
+      const resp = await fetch('http://localhost:4000/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ username: trimmed, password }),
+      });
+
+      if (!resp.ok) {
+        setAuthError('用户名或密码错误');
+        return false;
+      }
+
+      const data = await resp.json();
+      const userKey = data.userKey;
+      const token = data.token;
+
+      if (userKey !== 'A' && userKey !== 'B') {
+        setAuthError('服务器返回的用户无效');
+        return false;
+      }
+
+      setAppUser(userKey);
+      setBackendToken(token);
+      localStorage.setItem('fluxflow_app_user', userKey);
+      localStorage.setItem('fluxflow_backend_token', token);
+      setAuthError('');
+      return true;
+    } catch (err) {
+      console.error('调用后端登录失败', err);
+      setAuthError('无法连接后端服务，请稍后重试');
+      return false;
+    }
+  };
+
+  const logoutAppUser = () => {
+    setAppUser('');
+    setBackendToken('');
+    localStorage.removeItem('fluxflow_app_user');
+    localStorage.removeItem('fluxflow_backend_token');
   };
 
   return {
@@ -316,6 +514,13 @@ export const useTasks = () => {
     intentChains,
     setChainNext,
     addTaskAsNext,
+    loading,
+    // 用户管理相关
+    appUser,
+    loginAppUser,
+    logoutAppUser,
+    authError,
+    backendToken,
   };
 };
 

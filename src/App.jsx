@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { TaskProvider, useTaskContext } from './context/TaskContext.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import Header from './components/Header.jsx';
@@ -12,6 +12,71 @@ import IntentChainView from './components/IntentChainView.jsx';
 import TimerPanel from './components/TimerPanel.jsx';
 import TaskEditPanel from './components/TaskEditPanel.jsx';
 
+const AuthGate = () => {
+  const { appUser, loginAppUser, authError, loading } = useTaskContext();
+  const [name, setName] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    await loginAppUser(name, password);
+  };
+
+  if (loading) {
+    return (
+      <div className="absolute inset-0 z-50 flex items-center justify-center bg-white">
+        <p className="text-xs text-slate-400 tracking-wide">正在连接云端…</p>
+      </div>
+    );
+  }
+
+  if (appUser === 'A' || appUser === 'B') {
+    return null;
+  }
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-white">
+      <form
+        onSubmit={handleSubmit}
+        className="w-full max-w-xs bg-slate-900 text-white rounded-3xl px-6 py-5 shadow-xl shadow-slate-300/70"
+      >
+        <h2 className="text-sm font-bold tracking-tight mb-3">选择使用者</h2>
+        <p className="text-[11px] text-slate-300 mb-4">
+          为了区分你和另一位使用者，本应用内置了两个账号：
+        </p>
+        <div className="mb-3">
+          <label className="block text-[11px] font-semibold mb-1">用户名（A 或 B）</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full h-8 rounded-xl px-3 text-xs bg-slate-800 border border-slate-700 focus:outline-none focus:border-slate-400"
+            placeholder="输入 A 或 B"
+          />
+        </div>
+        <div className="mb-3">
+          <label className="block text-[11px] font-semibold mb-1">密码</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full h-8 rounded-xl px-3 text-xs bg-slate-800 border border-slate-700 focus:outline-none focus:border-slate-400"
+            placeholder="默认密码 123"
+          />
+        </div>
+        {authError && (
+          <p className="text-[11px] text-rose-400 mb-2">{authError}</p>
+        )}
+        <button
+          type="submit"
+          className="w-full h-8 mt-1 rounded-xl bg-white text-slate-900 text-xs font-bold tracking-wide hover:bg-slate-100 transition-colors"
+        >
+          进入 FluxFlow
+        </button>
+      </form>
+    </div>
+  );
+};
+
 const AppLayout = () => {
   const { activeTab, flowViewMode, clearEditingTask, leftWidth, rightWidth, startResizingRight, coreTask } = useTaskContext();
 
@@ -19,7 +84,7 @@ const AppLayout = () => {
 
   return (
     <div
-      className="flex h-full min-h-0 w-full min-w-0 max-w-full bg-white text-slate-800 select-none overflow-hidden"
+      className="flex h-full min-h-0 w-full min-w-0 max-w-full bg-white text-slate-800 select-none overflow-hidden relative"
       onClick={clearEditingTask}
     >
       <DomainModal />
@@ -55,6 +120,9 @@ const AppLayout = () => {
           <TaskEditPanel />
         </div>
       </aside>
+
+      {/* 登录遮罩：未选择 A/B 时覆盖整个应用 */}
+      <AuthGate />
     </div>
   );
 };
